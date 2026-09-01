@@ -1,4 +1,5 @@
 name: Publish Gallery
+
 on:
   push:
     branches:
@@ -6,33 +7,74 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+# Cancel an older Pages deployment when a newer one starts.
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
 permissions:
-  id-token: write
-  actions: write
-  pages: write
+  contents: read
+
 jobs:
-  deploy:
-    name: Publish Gallery to Github Pages
-    if: ${{ github.repository != 'gautamkrishnar/github-pages-gallery' && github.event.head_commit.message != '' && github.event.head_commit.message != 'Initial commit' }}
+  build:
+    name: Build Gallery
+
+    # Exclude the template/source repository.
+    # Only check head_commit.message for push events.
+    if: >-
+      github.repository != 'gautamkrishnar/github-pages-gallery' &&
+      (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          github.event.head_commit.message != '' &&
+          github.event.head_commit.message != 'Initial commit'
+        )
+      )
+
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout 🛎️
-        uses:  actions/checkout@v4
+        uses: actions/checkout@v4
         with:
           persist-credentials: false
+
       - name: Build Gallery 🔧
-        run: docker run -v "$(pwd):/work" ghcr.io/thumbsup/thumbsup /bin/sh -c "cd /work/ && thumbsup --config config.json"
-      - name: Package and upload artifact 📦
-        uses: actions/upload-pages-artifact@v3
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/work" \
+            ghcr.io/thumbsup/thumbsup \
+            /bin/sh -c "cd /work && thumbsup --config config.json"
+
+      - name: Package and upload Pages artifact 📦
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-pages-artifact@v4
         with:
-          path: 'build_output'
+          path: build_output
           name: gh-pages
-      - name: Deploy to Github Pages 🚀
+
+  deploy:
+    name: Publish Gallery to GitHub Pages
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    needs: build
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to GitHub Pages 🚀
+        id: deployment
         uses: actions/deploy-pages@v4
         with:
           artifact_name: gh-pages
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Delete artifact 🗑️
-        uses: geekyeggo/delete-artifact@v4
-        with:
-          name: gh-pages
